@@ -283,6 +283,20 @@ if (!process.env.VERCEL) {
 
 // Handler for Vercel Serverless Function
 export default async function handler(req: any, res: any) {
-  const server = await createNestServer();
-  return server(req, res);
+  try {
+    const server = await createNestServer();
+    return server(req, res);
+  } catch (err: any) {
+    console.error('VERCEL CRASH ERROR:', err);
+    return res.status(200).json({
+      status: 'VERCEL_NEST_INITIALIZATION_ERROR',
+      error: err?.message || String(err),
+      stack: err?.stack,
+      envCheck: {
+        hasMongoUri: !!(process.env.MONGO_URI || process.env.MONGODB_URI),
+        hasJwtSecret: !!process.env.JWT_SECRET,
+        nodeVersion: process.version,
+      },
+    });
+  }
 }
