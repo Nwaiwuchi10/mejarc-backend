@@ -1,19 +1,13 @@
 {
   "version": 2,
-  "builds": [
+  "rewrites": [
     {
-      "src": "api/index.ts",
-      "use": "@vercel/node",
-      "config": {
-        "maxDuration": 60,
-        "includeFiles": ["dist/**", "package.json"]
-      }
-    }
-  ],
-  "routes": [
+      "source": "/api/test",
+      "destination": "/api/test.js"
+    },
     {
-      "src": "/(.*)",
-      "dest": "/api/index.ts"
+      "source": "/(.*)",
+      "destination": "/api/index.js"
     }
   ]
 }
