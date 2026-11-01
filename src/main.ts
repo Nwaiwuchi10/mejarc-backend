@@ -300,3 +300,9 @@ export default async function handler(req: any, res: any) {
     });
   }
 }
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = handler;
+  module.exports.default = handler;
+  module.exports.createNestServer = createNestServer;
+}
