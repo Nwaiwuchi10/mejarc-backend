@@ -18,7 +18,7 @@ let PaystackService = class PaystackService {
         this.baseUrl = 'https://api.paystack.co';
         this.apiKey = process.env.PAYSTACK_SECRET_KEY || '';
         if (!this.apiKey) {
-            throw new common_1.InternalServerErrorException('PAYSTACK_SECRET_KEY is not configured');
+            console.warn('PAYSTACK_SECRET_KEY is not configured. Paystack features will be disabled until key is provided.');
         }
         this.client = axios_1.default.create({
             baseURL: this.baseUrl,

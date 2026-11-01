@@ -70,8 +70,8 @@ export class PaystackService {
     this.apiKey = process.env.PAYSTACK_SECRET_KEY || '';
 
     if (!this.apiKey) {
-      throw new InternalServerErrorException(
-        'PAYSTACK_SECRET_KEY is not configured',
+      console.warn(
+        'PAYSTACK_SECRET_KEY is not configured. Paystack features will be disabled until key is provided.',
       );
     }
 
