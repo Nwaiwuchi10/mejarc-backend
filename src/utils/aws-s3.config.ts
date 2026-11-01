@@ -1,5 +1,7 @@
 import { S3Client, HeadBucketCommand } from '@aws-sdk/client-s3';
-import * as multerS3 from 'multer-s3';
+const multerS3Pkg = require('multer-s3');
+const multerS3Storage = typeof multerS3Pkg === 'function' ? multerS3Pkg : (multerS3Pkg && multerS3Pkg.default ? multerS3Pkg.default : multerS3Pkg);
+export const getMulterS3 = () => multerS3Storage;
 import { memoryStorage } from 'multer';
 import * as dotenv from 'dotenv';
 
@@ -54,11 +56,11 @@ export function createS3Storage(keyPrefix: string) {
     return memoryStorage();
   }
 
-  return (multerS3 as any)({
+  return multerS3Storage({
     s3: s3Client as any,
     bucket: AWS_S3_BUCKET_NAME,
-    contentType: (multerS3 as any).AUTO_CONTENT_TYPE,
-    key: (req, file, cb) => {
+    contentType: multerS3Storage.AUTO_CONTENT_TYPE,
+    key: (req: any, file: any, cb: any) => {
       const sanitized = file.originalname
         .replace(/\s+/g, '')
         .replace(/[^a-zA-Z0-9.-]/g, '');

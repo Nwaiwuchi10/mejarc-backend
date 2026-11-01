@@ -30,9 +30,9 @@ import { UserAuthGuard } from './guard/user.guard';
 import { UpdateNotificationSettingsDto } from './dto/notification-settings.dto';
 
 import { FileInterceptor } from '@nestjs/platform-express';
-import { AWS_S3_BUCKET_NAME, s3Client } from 'src/utils/aws-s3.config';
+import { AWS_S3_BUCKET_NAME, s3Client, getMulterS3 } from 'src/utils/aws-s3.config';
 
-import * as multerS3 from 'multer-s3';
+const multerS3 = getMulterS3();
 
 @ApiTags('User')
 @Controller('user')

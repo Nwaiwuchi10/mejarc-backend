@@ -25,7 +25,7 @@ const pagination_dto_1 = require("../utils/pagination.dto");
 const user_guard_1 = require("../user/guard/user.guard");
 const platform_express_1 = require("@nestjs/platform-express");
 const aws_s3_config_1 = require("../utils/aws-s3.config");
-const multerS3 = require("multer-s3");
+const multerS3 = (0, aws_s3_config_1.getMulterS3)();
 let AgentController = class AgentController {
     constructor(agentService, analyticsService) {
         this.agentService = agentService;
