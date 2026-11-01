@@ -1,9 +1,9 @@
-import { NestFactory } from '@nestjs/core';
-import { AppModule } from '../src/app.module';
-import * as bodyParser from 'body-parser';
-import { ValidationPipe } from '@nestjs/common';
-import { ExpressAdapter } from '@nestjs/platform-express';
-import * as express from 'express';
+const { NestFactory } = require('@nestjs/core');
+const { AppModule } = require('../dist/src/app.module');
+const bodyParser = require('body-parser');
+const { ValidationPipe } = require('@nestjs/common');
+const { ExpressAdapter } = require('@nestjs/platform-express');
+const express = require('express');
 
 const server = express();
 let isAppInitialized = false;
@@ -38,17 +38,17 @@ async function bootstrap() {
   return server;
 }
 
-export default async function handler(req: any, res: any) {
+module.exports = async (req, res) => {
   try {
     await bootstrap();
     server(req, res);
-  } catch (err: any) {
+  } catch (err) {
     console.error('Fatal Serverless Bootstrap Error:', err);
     res.status(500).json({
       error: 'Vercel Serverless Function Error',
-      message: err?.message || String(err),
-      name: err?.name,
-      stack: err?.stack,
+      message: err && err.message ? err.message : String(err),
+      name: err && err.name ? err.name : 'UnknownError',
+      stack: err && err.stack ? err.stack : undefined,
     });
   }
-}
+};
