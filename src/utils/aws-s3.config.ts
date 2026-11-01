@@ -1,0 +1,68 @@
+import { S3Client, HeadBucketCommand } from '@aws-sdk/client-s3';
+import * as multerS3 from 'multer-s3';
+import { memoryStorage } from 'multer';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
+
+const hasS3Credentials = !!(
+  process.env.AWS_REGION &&
+  process.env.AWS_ACCESS_KEY_ID &&
+  process.env.AWS_SECRET_ACCESS_KEY &&
+  process.env.AWS_S3_BUCKET_NAME
+);
+
+export const s3Client = hasS3Credentials
+  ? new S3Client({
+    region: process.env.AWS_REGION as string,
+    credentials: {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID as string,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY as string,
+    },
+  })
+  : null;
+
+export const AWS_S3_BUCKET_NAME = process.env.AWS_S3_BUCKET_NAME || '';
+
+// Force AWS SDK to sync its internal clock offset by making a quick, lightweight request.
+// Even if it fails (due to clock skew or auth), the SDK extracts the server time and adjusts.
+if (s3Client && AWS_S3_BUCKET_NAME) {
+  s3Client
+    .send(new HeadBucketCommand({ Bucket: AWS_S3_BUCKET_NAME }))
+    .catch((err) => {
+      console.log(
+        'S3 clock synchronization check finished (error expected/ignored):',
+        err.name || err.message,
+      );
+    });
+}
+
+console.log('AWS S3 Configuration:', {
+  hasS3Credentials,
+  REGION: process.env.AWS_REGION,
+  BUCKET: process.env.AWS_S3_BUCKET_NAME,
+});
+
+/**
+ * Factory function to create S3 or Memory storage based on credentials availability
+ */
+export function createS3Storage(keyPrefix: string) {
+  if (!hasS3Credentials || !s3Client) {
+    console.warn(
+      'S3 credentials not available. Using in-memory storage (data will be lost on restart)',
+    );
+    return memoryStorage();
+  }
+
+  return (multerS3 as any)({
+    s3: s3Client as any,
+    bucket: AWS_S3_BUCKET_NAME,
+    contentType: (multerS3 as any).AUTO_CONTENT_TYPE,
+    key: (req, file, cb) => {
+      const sanitized = file.originalname
+        .replace(/\s+/g, '')
+        .replace(/[^a-zA-Z0-9.-]/g, '');
+      cb(null, `${keyPrefix}/${Date.now()}-${sanitized}`);
+    },
+  });
+}

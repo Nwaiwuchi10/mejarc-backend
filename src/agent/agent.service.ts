@@ -1,0 +1,866 @@
+import {
+  Injectable,
+  NotFoundException,
+  Logger,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
+import { CreateAgentDto } from './dto/create-agent.dto';
+import { UpdateAgentDto } from './dto/update-agent.dto';
+import { CreateAgentProfileDto } from './dto/create-agent-profile.dto';
+import { CreateAgentBioDto } from './dto/create-agent-bio.dto';
+import { CreateAgentKycDto } from './dto/create-agent-kyc.dto';
+import { ProOverviewDto } from './dto/pro-overview.dto';
+import { MarketProduct } from '../marketproduct/entities/marketproduct.entity';
+import { InjectRepository } from 'src/database/database.module';
+import { Repository, Like } from 'src/database/database.module';
+import {
+  Agent,
+  AgentKycStatus,
+  AgentRegistrationStatus,
+} from './entities/agent.entity';
+import {
+  AgentProfile,
+  TITLES_REQUIRING_LICENSE,
+} from './entities/agent-profile.entity';
+import { AgentBio } from './entities/agent-bio.entity';
+import { AgentKyc } from './entities/agent-kyc.entity';
+import { Wallet } from '../wallet/entities/wallet.entity';
+import { User } from '../user/entities/user.entity';
+import { Admin } from '../admin/entities/admin.entity';
+import { UverifyKycProvider } from './provider/uverify.provider';
+import { AgentMailService } from './service/mail.service';
+import { PaginationDto } from '../utils/pagination.dto';
+import { NotificationService } from '../notification/notification.service';
+import { NotificationType } from '../notification/entities/notification.entity';
+
+@Injectable()
+export class AgentService {
+  private readonly logger = new Logger(AgentService.name);
+
+  constructor(
+    @InjectRepository(Agent)
+    private agentRepo: Repository<Agent>,
+    @InjectRepository(AgentProfile)
+    private profileRepo: Repository<AgentProfile>,
+    @InjectRepository(AgentBio)
+    private bioRepo: Repository<AgentBio>,
+    @InjectRepository(AgentKyc)
+    private kycRepo: Repository<AgentKyc>,
+    @InjectRepository(User)
+    private userRepo: Repository<User>,
+    @InjectRepository(Admin)
+    private adminRepo: Repository<Admin>,
+    @InjectRepository(MarketProduct)
+    private productRepo: Repository<MarketProduct>,
+    private readonly kycProvider: UverifyKycProvider,
+    private readonly mailService: AgentMailService,
+    private readonly notificationService: NotificationService,
+  ) {}
+
+  /**
+   * Initialize agent registration - Creates agent record after user signup
+   */
+  async initializeAgent(userId: string) {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    // Check if agent already exists
+    const existingAgent = await this.agentRepo.findOne({ where: { userId } });
+    if (existingAgent) {
+      throw new ConflictException('Agent profile already exists for this user');
+    }
+
+    const wallet = new Wallet();
+    const agent = this.agentRepo.create({
+      user,
+      userId,
+      registrationStatus: AgentRegistrationStatus.PROFILE_PENDING,
+      wallet,
+    });
+
+    return this.agentRepo.save(agent);
+  }
+
+  /**
+   * Step 1: Submit Profile Information with optional file upload
+   */
+  async submitProfile(
+    userId: string,
+    profileDto: CreateAgentProfileDto,
+    file?: Express.Multer.File,
+  ) {
+    // remove any stray agent_kyc rows with null agentId before we begin
+    await this.kycRepo
+      .createQueryBuilder()
+      .delete()
+      .from(AgentKyc)
+      .where('"agentId" IS NULL')
+      .execute();
+
+    const agent = await this.agentRepo.findOne({
+      where: { userId },
+      relations: ['user'],
+    });
+    if (agent && !agent.id) {
+      throw new BadRequestException('Invalid agent record (missing id)');
+    }
+
+    if (!agent) {
+      throw new NotFoundException(
+        'Agent profile not found. Please initialize first.',
+      );
+    }
+
+    // === Validate required fields ===
+    if (
+      !profileDto.yearsOfExperience ||
+      !profileDto.preferredTitle ||
+      !profileDto.specialization
+    ) {
+      throw new BadRequestException(
+        'yearsOfExperience, preferredTitle, and specialization are required',
+      );
+    }
+
+    // === Enforce license number for titles that require it ===
+    if (
+      TITLES_REQUIRING_LICENSE.includes(profileDto.preferredTitle as any) &&
+      !profileDto.licenseNumber
+    ) {
+      throw new BadRequestException(
+        `licenseNumber is required for ${profileDto.preferredTitle}`,
+      );
+    }
+
+    // create or update profile entity
+    let profile: any = await this.profileRepo.findOne({
+      where: { agentId: agent.id },
+    });
+    if (!profile) {
+      profile = this.profileRepo.create({ agent, agentId: agent.id });
+    }
+
+    profile.yearsOfExperience = profileDto.yearsOfExperience;
+    profile.preferredTitle = profileDto.preferredTitle as any;
+    profile.licenseNumber = profileDto.licenseNumber ?? undefined;
+    profile.specialization = profileDto.specialization;
+    profile.portfolioLink = profileDto.portfolioLink;
+    profile.phoneNumber = profileDto.phoneNumber;
+    profile.location = profileDto.location;
+    profile.responseTime = profileDto.responseTime;
+    profile.completedProjectsCount = profileDto.completedProjectsCount ?? 0;
+
+    // === Handle profile picture upload (S3) ===
+    if (file) {
+      const uploadedFile = file as Express.Multer.File & {
+        location?: string;
+      };
+      if (!uploadedFile.location) {
+        throw new BadRequestException('File upload failed: location missing');
+      }
+      profile.profilePicture = uploadedFile.location;
+    } else if (profileDto.profilePicture) {
+      // Fallback to DTO provided URL if no file uploaded
+      profile.profilePicture = profileDto.profilePicture;
+    }
+
+    await this.profileRepo.save(profile);
+
+    // Update phone on user if provided
+    if (profileDto.phoneNumber) {
+      agent.user.phoneNumber = profileDto.phoneNumber;
+      await this.userRepo.save(agent.user);
+    }
+
+    // Move to bio step
+    agent.registrationStatus = AgentRegistrationStatus.BIO_PENDING;
+    // avoid cascading existing kycRecords which may contain bad rows
+    // (save only the status fields)
+    await this.agentRepo.update(agent.id, {
+      registrationStatus: agent.registrationStatus,
+    });
+    // return the fresh agent entity for callers
+    return this.agentRepo.findOne({
+      where: { id: agent.id },
+      relations: ['user'],
+    });
+  }
+
+  /**
+   * Step 2: Submit Bio
+   */
+  async submitBio(agentId: string, bioDto: CreateAgentBioDto) {
+    const agent = await this.agentRepo.findOne({ where: { id: agentId } });
+    if (agent && !agent.id) {
+      throw new BadRequestException('Invalid agent record (missing id)');
+    }
+    if (!agent) {
+      throw new NotFoundException('Agent not found');
+    }
+
+    if (agent.registrationStatus === AgentRegistrationStatus.APPROVED) {
+      throw new BadRequestException('Cannot update approved agent profile');
+    }
+
+    // create or update bio record
+    let bio = await this.bioRepo.findOne({ where: { agentId: agent.id } });
+    if (!bio) {
+      bio = this.bioRepo.create({ agent, agentId: agent.id, bio: bioDto.bio });
+    } else {
+      bio.bio = bioDto.bio;
+    }
+    await this.bioRepo.save(bio);
+
+    agent.registrationStatus = AgentRegistrationStatus.KYC_PENDING;
+    // update without cascading kyc records
+    await this.agentRepo.update(agent.id, {
+      registrationStatus: agent.registrationStatus,
+    });
+    return this.agentRepo.findOne({
+      where: { id: agent.id },
+      relations: ['user'],
+    });
+  }
+
+  /**
+   * Step 3: Submit KYC Information with file uploads
+   */
+  async submitKyc(
+    agentId: string,
+    kycDto: CreateAgentKycDto,
+    files?: {
+      idDocument?: Express.Multer.File[];
+      architectCert?: Express.Multer.File[];
+    },
+  ) {
+    const agent = await this.agentRepo.findOne({ where: { id: agentId } });
+    if (agent && !agent.id) {
+      throw new BadRequestException('Invalid agent record (missing id)');
+    }
+
+    if (!agent) {
+      throw new NotFoundException('Agent not found');
+    }
+
+    if (agent.registrationStatus === AgentRegistrationStatus.APPROVED) {
+      throw new BadRequestException('Cannot update approved agent profile');
+    }
+
+    // Validate KYC fields
+    if (!kycDto.idType || !kycDto.idNumber) {
+      throw new BadRequestException('ID type and number are required');
+    }
+
+    if (
+      !kycDto.bankName ||
+      !kycDto.accountNumber ||
+      !kycDto.accountHolderName
+    ) {
+      throw new BadRequestException('Bank details are required');
+    }
+
+    // === Handle file uploads (S3) ===
+    let idDocumentUrl: string | undefined;
+    let architectCertUrl: string | undefined;
+
+    // clean up any orphaned kyc records that slipped through earlier
+    // (they cause cascade save failures because agentId is null)
+    await this.kycRepo
+      .createQueryBuilder()
+      .delete()
+      .from(AgentKyc)
+      .where('"agentId" IS NULL')
+      .execute();
+
+    if (files?.idDocument && files.idDocument.length > 0) {
+      const uploadedFile = files.idDocument[0] as Express.Multer.File & {
+        location?: string;
+      };
+      if (!uploadedFile.location) {
+        throw new BadRequestException(
+          'ID Document upload failed: location missing',
+        );
+      }
+      idDocumentUrl = uploadedFile.location;
+    } else if (kycDto.idDocument) {
+      // Fallback to DTO provided URL if no file uploaded
+      idDocumentUrl = kycDto.idDocument;
+    }
+
+    if (files?.architectCert && files.architectCert.length > 0) {
+      const uploadedFile = files.architectCert[0] as Express.Multer.File & {
+        location?: string;
+      };
+      if (!uploadedFile.location) {
+        throw new BadRequestException(
+          'Architect Certificate upload failed: location missing',
+        );
+      }
+      architectCertUrl = uploadedFile.location;
+    } else if (kycDto.architectCert) {
+      // Fallback to DTO provided URL if no file uploaded
+      architectCertUrl = kycDto.architectCert;
+    }
+
+    // Find existing KYC record for this agent (e.g., latest or PENDING)
+    let kyc: any = await this.kycRepo.findOne({
+      where: { agentId: agent.id },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (kyc) {
+      // Update existing KYC record
+      kyc.agent = agent;
+      kyc.agentId = agent.id;
+      kyc.idType = kycDto.idType;
+      kyc.idNumber = kycDto.idNumber;
+      kyc.idDocument = idDocumentUrl;
+      kyc.architectCert = architectCertUrl;
+      kyc.bankName = kycDto.bankName;
+      kyc.accountNumber = kycDto.accountNumber;
+      kyc.accountHolderName = kycDto.accountHolderName;
+      kyc.documents = [];
+      kyc.status = 'PENDING' as any;
+    } else {
+      // Create new KYC record
+      kyc = this.kycRepo.create({
+        agent,
+        agentId: agent.id,
+        idType: kycDto.idType,
+        idNumber: kycDto.idNumber,
+        idDocument: idDocumentUrl,
+        architectCert: architectCertUrl,
+        bankName: kycDto.bankName,
+        accountNumber: kycDto.accountNumber,
+        accountHolderName: kycDto.accountHolderName,
+        documents: [],
+        status: 'PENDING' as any,
+      });
+    }
+    // Always ensure agentId is set
+    kyc.agentId = agent.id;
+    await this.kycRepo.save(kyc);
+
+    // Move to awaiting approval
+    agent.registrationStatus = AgentRegistrationStatus.AWAITING_APPROVAL;
+    agent.kycStatus = AgentKycStatus.PENDING;
+
+    // avoid cascade issues by only updating the status fields
+    await this.agentRepo.update(agent.id, {
+      registrationStatus: agent.registrationStatus,
+      kycStatus: agent.kycStatus,
+    });
+
+    const savedAgent = await this.agentRepo.findOne({
+      where: { id: agent.id },
+      relations: ['user'],
+    });
+    if (!savedAgent) {
+      // this should not happen since we just updated the agent
+      throw new BadRequestException('Failed to load agent after KYC save');
+    }
+
+    // Reload agent with user relation to ensure user is populated
+    const agentWithUser = await this.agentRepo.findOne({
+      where: { id: savedAgent.id },
+      relations: ['user'],
+    });
+
+    // Send notification to agent that registration is submitted
+    try {
+      if (agentWithUser && agentWithUser.user) {
+        await this.mailService.sendAgentRegistrationSubmittedNotification(
+          agentWithUser.user,
+          agentWithUser,
+        );
+      } else {
+        this.logger.warn(
+          'Agent user relation not found for registration notification',
+        );
+      }
+    } catch (error) {
+      this.logger.warn('Failed to send registration submitted email', error);
+    }
+
+    // Notify admins about new KYC submission
+    try {
+      const admins = await this.adminRepo.find({ relations: ['user'] });
+      for (const admin of admins) {
+        if (admin.user) {
+          await this.mailService.sendKycUploadedNotification(
+            admin.user,
+            savedAgent,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.warn('Failed to notify admins about KYC submission', error);
+    }
+
+    // Attempt automatic KYC verification via provider
+    try {
+      // Build documents list from latest KYC record
+      const latestKyc = await this.kycRepo.findOne({
+        where: { agentId: agent.id },
+        order: { createdAt: 'DESC' },
+      });
+      const documents: { key: string; url: string; name: string }[] = [];
+      if (latestKyc?.idDocument) {
+        documents.push({
+          key: 'idDocument',
+          url: latestKyc.idDocument,
+          name: 'ID Document',
+        });
+      }
+      if (latestKyc?.architectCert) {
+        documents.push({
+          key: 'architectCert',
+          url: latestKyc.architectCert,
+          name: 'Architect Certificate',
+        });
+      }
+
+      if (documents.length > 0) {
+        const verificationResult =
+          await this.kycProvider.verifyDocuments(documents);
+        if (verificationResult.success) {
+          savedAgent.kycStatus = AgentKycStatus.VERIFIED;
+          if (latestKyc) {
+            latestKyc.status = 'VERIFIED' as any;
+            await this.kycRepo.save(latestKyc);
+          }
+        } else {
+          savedAgent.kycStatus = AgentKycStatus.PENDING; // Await manual review
+        }
+        await this.agentRepo.save(savedAgent);
+      }
+    } catch (error) {
+      this.logger.warn('KYC provider verification failed', error);
+      // Continue without automatic verification
+    }
+
+    return savedAgent;
+  }
+
+  /**
+   * Admin: Approve Agent Registration
+   */
+  async approveAgent(agentId: string, adminId: string) {
+    const agent = await this.agentRepo.findOne({
+      where: { id: agentId },
+      relations: ['user'],
+    });
+
+    if (!agent) {
+      throw new NotFoundException('Agent not found');
+    }
+
+    agent.registrationStatus = AgentRegistrationStatus.APPROVED;
+    agent.isApprovedByAdmin = true;
+    agent.approvedAt = new Date();
+
+    const savedAgent = await this.agentRepo.save(agent);
+
+    // Notify agent via persistent notification
+    if (savedAgent.user) {
+      await this.notificationService.createNotification(
+        savedAgent.user.id,
+        NotificationType.KYC,
+        'Account Verified',
+        'Your agent account was successfully verified by admin. You can now list products on the marketplace.',
+        { agentId: savedAgent.id },
+        'projectStatusChanged',
+      );
+    }
+
+    // Send approval email to agent
+    try {
+      await this.mailService.sendAgentApprovalNotification(
+        savedAgent.user,
+        savedAgent,
+        true,
+      );
+    } catch (error) {
+      this.logger.warn('Failed to send approval email', error);
+    }
+
+    return savedAgent;
+  }
+
+  /**
+   * Admin: Reject Agent Registration
+   */
+  async rejectAgent(agentId: string, adminId: string, reason: string) {
+    const agent = await this.agentRepo.findOne({
+      where: { id: agentId },
+      relations: ['user'],
+    });
+
+    if (!agent) {
+      throw new NotFoundException('Agent not found');
+    }
+
+    agent.registrationStatus = AgentRegistrationStatus.REJECTED;
+    agent.rejectionReason = reason;
+    agent.kycStatus = AgentKycStatus.REJECTED;
+
+    const savedAgent = await this.agentRepo.save(agent);
+
+    // Send rejection email to agent
+    try {
+      await this.mailService.sendAgentRejectionNotification(
+        savedAgent.user,
+        savedAgent,
+        reason,
+      );
+    } catch (error) {
+      this.logger.warn('Failed to send rejection email', error);
+    }
+
+    return savedAgent;
+  }
+
+  /**
+   * Get agent by userId
+   */
+  async getAgentByUserId(userId: string) {
+    const agent = await this.agentRepo.findOne({
+      where: { userId },
+      relations: ['user', 'profile', 'bioRecord', 'kycRecords'],
+    });
+
+    if (!agent) {
+      throw new NotFoundException('Agent profile not found for this user');
+    }
+
+    return agent;
+  }
+
+  /**
+   * Get agent status
+   */
+  async getAgentStatus(agentId: string) {
+    const agent = await this.agentRepo.findOne({
+      where: { id: agentId },
+      relations: ['user', 'kycRecords'],
+    });
+
+    if (!agent) {
+      throw new NotFoundException('Agent not found');
+    }
+
+    return {
+      id: agent.id,
+      registrationStatus: agent.registrationStatus,
+      kycStatus: agent.kycStatus,
+      isApproved: agent.isApprovedByAdmin,
+      approvedAt: agent.approvedAt,
+      rejectionReason: agent.rejectionReason,
+    };
+  }
+
+  // ===== LEGACY METHODS =====
+
+  async create(userId: string, dto: CreateAgentDto) {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const wallet = new Wallet();
+    const agent = this.agentRepo.create({ ...dto, user, userId, wallet });
+    return this.agentRepo.save(agent);
+  }
+
+  async findAllPros(
+    paginationDto: PaginationDto,
+  ): Promise<{ data: ProOverviewDto[]; meta: any }> {
+    const { page = 1, limit = 10, search } = paginationDto;
+    const skip = (page - 1) * limit;
+
+    const query = this.agentRepo
+      .createQueryBuilder('agent')
+      .leftJoinAndSelect('agent.profile', 'profile')
+      .leftJoinAndSelect('agent.user', 'user')
+      .where('agent.registrationStatus = :status', {
+        status: AgentRegistrationStatus.APPROVED,
+      });
+
+    if (search) {
+      query.andWhere(
+        '(agent.businessName ILIKE :search OR user.firstName ILIKE :search OR user.lastName ILIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
+
+    const [agents, total] = await query
+      .orderBy('agent.createdAt', 'DESC')
+      .take(limit)
+      .skip(skip)
+      .getManyAndCount();
+
+    const pros: ProOverviewDto[] = await Promise.all(
+      agents.map(async (agent) => {
+        const products = await this.productRepo.find({
+          where: { agentId: agent.id },
+        });
+        return this.mapToProOverview(agent, products);
+      }),
+    );
+
+    return {
+      data: pros,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async findAll(paginationDto: PaginationDto) {
+    const { page = 1, limit = 10, search } = paginationDto;
+    const skip = (page - 1) * limit;
+
+    const queryOptions: any = {
+      where: { registrationStatus: AgentRegistrationStatus.APPROVED },
+      relations: ['user', 'profile'],
+      order: { createdAt: 'DESC' },
+      take: limit,
+      skip: skip,
+    };
+
+    if (search) {
+      queryOptions.where = [
+        {
+          registrationStatus: AgentRegistrationStatus.APPROVED,
+          businessName: Like(`%${search}%`),
+        },
+        {
+          registrationStatus: AgentRegistrationStatus.APPROVED,
+          user: { firstName: Like(`%${search}%`) },
+        },
+        {
+          registrationStatus: AgentRegistrationStatus.APPROVED,
+          user: { lastName: Like(`%${search}%`) },
+        },
+        {
+          registrationStatus: AgentRegistrationStatus.APPROVED,
+          user: { email: Like(`%${search}%`) },
+        },
+      ];
+    }
+
+    const [data, total] = await this.agentRepo.findAndCount(queryOptions);
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        // ...(hasMore !== undefined && { hasMore }) // if we had hasMore logic
+      },
+    };
+  }
+
+  findOne(id: string) {
+    return this.agentRepo.findOne({ where: { id }, relations: ['user'] });
+  }
+
+  async update(id: string, dto: UpdateAgentDto) {
+    const agent = await this.findOne(id);
+    if (!agent) throw new NotFoundException('Agent not found');
+    Object.assign(agent, dto);
+    return this.agentRepo.save(agent);
+  }
+
+  async remove(id: string) {
+    const agent = await this.findOne(id);
+    if (!agent) throw new NotFoundException('Agent not found');
+    return this.agentRepo.softRemove(agent);
+  }
+
+  async addKycDocument(
+    id: string,
+    doc: { key: string; url: string; name?: string },
+  ) {
+    const agent = await this.findOne(id);
+    if (!agent) throw new NotFoundException('Agent not found');
+
+    // attach document to latest KYC record or create a new one
+    let latestKyc: any = await this.kycRepo.findOne({
+      where: { agentId: agent.id },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (!latestKyc) {
+      latestKyc = this.kycRepo.create({
+        agent,
+        agentId: agent.id,
+        idType: null as any,
+        idNumber: null as any,
+        documents: [doc],
+        status: 'PENDING' as any,
+      });
+    } else {
+      latestKyc.documents = latestKyc.documents || [];
+      latestKyc.documents.push(doc as any);
+      latestKyc.status = 'PENDING' as any;
+    }
+
+    await this.kycRepo.save(latestKyc);
+
+    agent.kycStatus = AgentKycStatus.PENDING;
+    const savedAgent = await this.agentRepo.save(agent);
+
+    // notify admins that KYC was uploaded
+    try {
+      const admins = await this.adminRepo.find({ relations: ['user'] });
+      for (const adm of admins) {
+        if (adm.user)
+          await this.mailService.sendKycUploadedNotification(
+            adm.user,
+            savedAgent as any,
+          );
+      }
+    } catch (e) {
+      this.logger.warn(
+        'Failed to notify admins about KYC upload',
+        e?.toString(),
+      );
+    }
+
+    // run provider verification (uVerify)
+    try {
+      const docs = (latestKyc.documents || []).map((d) => ({
+        key: d.key,
+        url: d.url,
+        name: d.name || d.key,
+      }));
+      const result = await this.kycProvider.verifyDocuments(docs);
+      if (result.success) {
+        latestKyc.status = 'VERIFIED' as any;
+        await this.kycRepo.save(latestKyc);
+        savedAgent.kycStatus = AgentKycStatus.VERIFIED;
+      } else {
+        latestKyc.status = 'REJECTED' as any;
+        await this.kycRepo.save(latestKyc);
+        savedAgent.kycStatus = AgentKycStatus.REJECTED;
+      }
+      await this.agentRepo.save(savedAgent);
+    } catch (err) {
+      this.logger.warn('KYC provider call failed', err?.toString());
+    }
+
+    return savedAgent;
+  }
+
+  async setKycStatus(id: string, status: AgentKycStatus) {
+    const agent = await this.findOne(id);
+    if (!agent) throw new NotFoundException('Agent not found');
+
+    // update latest kyc record if exists
+    const latestKyc = await this.kycRepo.findOne({
+      where: { agentId: agent.id },
+      order: { createdAt: 'DESC' },
+    });
+    if (latestKyc) {
+      latestKyc.status =
+        status === AgentKycStatus.VERIFIED
+          ? ('VERIFIED' as any)
+          : status === AgentKycStatus.REJECTED
+            ? ('REJECTED' as any)
+            : ('PENDING' as any);
+      await this.kycRepo.save(latestKyc);
+    }
+
+    agent.kycStatus = status;
+    const savedAgent = await this.agentRepo.save(agent);
+
+    if (status === AgentKycStatus.VERIFIED && savedAgent.user) {
+      await this.notificationService.createNotification(
+        savedAgent.user.id,
+        NotificationType.KYC,
+        'Account Verified',
+        'Your agent KYC has been verified.',
+        { agentId: savedAgent.id },
+        'projectStatusChanged',
+      );
+    }
+
+    return savedAgent;
+  }
+
+  async findProById(id: string): Promise<ProOverviewDto> {
+    const agent = await this.agentRepo.findOne({
+      where: {
+        id,
+        registrationStatus: AgentRegistrationStatus.APPROVED,
+      },
+      relations: ['user', 'profile'],
+    });
+
+    if (!agent) {
+      throw new NotFoundException(`Approved agent with ID ${id} not found`);
+    }
+
+    const products = await this.productRepo.find({
+      where: { agentId: agent.id },
+    });
+
+    return this.mapToProOverview(agent, products);
+  }
+
+  /**
+   * Helper to map an agent and their products to a ProOverviewDto.
+   * Centralizes the logic for rating calculation, price range derivation, and title formatting.
+   */
+  private mapToProOverview(
+    agent: Agent,
+    products: MarketProduct[],
+  ): ProOverviewDto {
+    // Calculate aggregated rating
+    let totalRating = 0;
+    let ratedProductsCount = 0;
+    products.forEach((p) => {
+      if (p.ratingCount > 0) {
+        totalRating += Number(p.averageRating);
+        ratedProductsCount++;
+      }
+    });
+    const avgRating =
+      ratedProductsCount > 0
+        ? Number((totalRating / ratedProductsCount).toFixed(1))
+        : 0;
+
+    // Find min price
+    let minPrice = 0;
+    if (products.length > 0) {
+      minPrice = Math.min(...products.map((p) => Number(p.price)));
+    }
+
+    // Combine title and specializations
+    const profTitle = agent.profile?.preferredTitle || 'Pro';
+    const specs = agent.profile?.specialization || [];
+    const combinedTitle = [profTitle, ...specs].join(', ');
+
+    return {
+      id: agent.id,
+      businessName: agent.businessName || 'Unnamed Business',
+      profilePicture: agent.profile?.profilePicture || '',
+      professionalTitle: combinedTitle,
+      specializations: specs,
+      rating: avgRating,
+      yearsOfExperience: agent.profile?.yearsOfExperience || 0,
+      completedProjects: agent.profile?.completedProjectsCount || 0,
+      location: agent.profile?.location || 'Unknown',
+      priceRange:
+        minPrice > 0
+          ? `from ₦${(minPrice / 1000).toFixed(0)}k`
+          : 'Contact for pricing',
+      responseTime: agent.profile?.responseTime || 'replies in 1 hour',
+    };
+  }
+}
