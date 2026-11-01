@@ -12,19 +12,14 @@ async function bootstrap() {
   if (!isAppInitialized) {
     const app = await NestFactory.create(AppModule, new ExpressAdapter(server), {
       cors: true,
+      logger: ['error', 'warn', 'log'],
     });
 
     app.use(bodyParser.json({ limit: '50mb' }));
     app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
     app.enableCors({
-      origin: [
-        'https://mejarc.onrender.com',
-        'https://admin-app-mv4j.onrender.com',
-        'https://mejarc-admin-portal.vercel.app',
-        'http://localhost:3000',
-        'http://localhost:3001',
-      ],
+      origin: '*',
       methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
       credentials: true,
     });
@@ -48,11 +43,12 @@ export default async function handler(req: any, res: any) {
     await bootstrap();
     server(req, res);
   } catch (err: any) {
-    console.error('Vercel handler bootstrap error:', err);
+    console.error('Fatal Serverless Bootstrap Error:', err);
     res.status(500).json({
-      error: 'Vercel Serverless Initialization Error',
-      message: err.message || err.toString(),
-      stack: process.env.NODE_ENV === 'production' ? undefined : err.stack,
+      error: 'Vercel Serverless Function Error',
+      message: err?.message || String(err),
+      name: err?.name,
+      stack: err?.stack,
     });
   }
 }
