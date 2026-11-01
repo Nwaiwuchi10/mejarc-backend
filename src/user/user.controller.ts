@@ -72,10 +72,10 @@ export class UserController {
   })
   @UseInterceptors(
     FileInterceptor('imgFile', {
-      storage: multerS3({
+      storage: (multerS3 as any)({
         s3: s3Client as any,
         bucket: AWS_S3_BUCKET_NAME,
-        contentType: multerS3.AUTO_CONTENT_TYPE,
+        contentType: (multerS3 as any).AUTO_CONTENT_TYPE,
         key: (req, file, cb) => {
           const sanitized = file.originalname
             .replace(/\s+/g, '')
@@ -253,10 +253,10 @@ export class UserController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseInterceptors(
     FileInterceptor('imgFile', {
-      storage: multerS3({
+      storage: (multerS3 as any)({
         s3: s3Client as any,
         bucket: AWS_S3_BUCKET_NAME,
-        contentType: multerS3.AUTO_CONTENT_TYPE,
+        contentType: (multerS3 as any).AUTO_CONTENT_TYPE,
         key: (req, file, cb) => {
           const sanitized = file.originalname
             .replace(/\s+/g, '')

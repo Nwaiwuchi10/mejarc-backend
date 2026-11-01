@@ -127,10 +127,10 @@ export class AgentController {
   @ApiResponse({ status: 200, description: 'Profile submitted successfully' })
   @UseInterceptors(
     FileInterceptor('profilePicture', {
-      storage: multerS3({
+      storage: (multerS3 as any)({
         s3: s3Client as any,
         bucket: AWS_S3_BUCKET_NAME,
-        contentType: multerS3.AUTO_CONTENT_TYPE,
+        contentType: (multerS3 as any).AUTO_CONTENT_TYPE,
         key: (req, file, cb) => {
           const sanitized = file.originalname
             .replace(/\s+/g, '')
@@ -217,10 +217,10 @@ export class AgentController {
         { name: 'architectCert', maxCount: 1 },
       ],
       {
-        storage: multerS3({
+        storage: (multerS3 as any)({
           s3: s3Client as any,
           bucket: AWS_S3_BUCKET_NAME,
-          contentType: multerS3.AUTO_CONTENT_TYPE,
+          contentType: (multerS3 as any).AUTO_CONTENT_TYPE,
           key: (req, file, cb) => {
             const sanitized = file.originalname
               .replace(/\s+/g, '')

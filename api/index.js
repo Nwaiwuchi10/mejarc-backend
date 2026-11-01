@@ -10,7 +10,12 @@ module.exports = async (req, res) => {
 
   try {
     const { NestFactory } = require('@nestjs/core');
-    const { AppModule } = require('../dist/src/app.module');
+    let AppModule;
+    try {
+      AppModule = require('../dist/app.module').AppModule;
+    } catch (e1) {
+      AppModule = require('../dist/src/app.module').AppModule;
+    }
     const bodyParser = require('body-parser');
     const { ValidationPipe } = require('@nestjs/common');
     const { ExpressAdapter } = require('@nestjs/platform-express');
