@@ -1,0 +1,476 @@
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MailService = void 0;
+const nodemailer_mailer_1 = require("../../utils/nodemailer-mailer");
+const dotenv = require("dotenv");
+const common_1 = require("@nestjs/common");
+const database_module_1 = require("../../database/database.module");
+const user_entity_1 = require("../../user/entities/user.entity");
+const uuid_1 = require("uuid");
+const SibApiV3Sdk = require("sib-api-v3-sdk");
+dotenv.config();
+let MailService = class MailService {
+    constructor(userRepository) {
+        this.userRepository = userRepository;
+        const defaultClient = SibApiV3Sdk.ApiClient.instance;
+        const apiKey = defaultClient.authentications['api-key'];
+        apiKey.apiKey = process.env.BREVO_API_KEY;
+        this.brevoClient = nodemailer_mailer_1.NodemailerMailer;
+    }
+    async ConfirmOrder(email, firstName, lastName, amount, reference, orderItems) {
+        let itemsHtml = '';
+        if (orderItems && orderItems.length > 0) {
+            itemsHtml =
+                `
+        <div style="margin-top: 15px; padding: 10px; background-color: #f1f1f1; border-radius: 8px;">
+          <h4 style="margin: 0 0 10px; color: #333;">Purchased Plan details:</h4>
+          <ul style="margin: 0; padding-left: 20px; font-size: 14px; color: #555;">
+      ` +
+                    orderItems
+                        .map((item) => {
+                        const title = item.title || item.product?.title || 'Building Plan';
+                        const prodId = item.product?.productId || (item.productId && !item.productId.includes('-') && item.productId.length < 12 ? item.productId : 'PRD001');
+                        return `<li style="margin-bottom: 6px;"><strong>${title}</strong> (Product ID: <span style="font-family: monospace; color: #0284c7; font-weight: bold;">${prodId}</span>) &bull; Qty: ${item.totalQuantity || 1}</li>`;
+                    })
+                        .join('') +
+                    `
+          </ul>
+        </div>
+      `;
+        }
+        const mailOptions = {
+            sender: { name: 'Mejarc', email: process.env.MAIL_FROM },
+            to: [{ email, name: firstName }],
+            subject: 'Order Confirmation - Thank You for Your Purchase!',
+            htmlContent: `
+        <div style="font-family: 'Arial', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);">
+            <div style="text-align: center; padding-bottom: 20px;">
+                <img src="https://res.cloudinary.com/dlrelihio/image/upload/v1770794866/mejarcnewlogo_rswhb7.webp" alt="Mejarc Logo" style="width: 150px; margin-bottom: 20px;" />
+                <h1 style="color: #333; font-size: 24px; margin-bottom: 5px;">Order Confirmed!</h1>
+                <p style="font-size: 16px; color: #777;">Thank you for your purchase, ${firstName}!</p>
+            </div>
+   
+            <div style="padding: 20px; background-color: #f9f9f9; border-radius: 8px;">
+                <p style="font-size: 16px; color: #555;">
+                    Dear <strong>${firstName} ${lastName}</strong>,
+                </p>
+                <p style="font-size: 16px; color: #555;">
+                    We're happy to let you know that your order has been confirmed. Below are your order details:
+                </p>
+                <ul style="font-size: 16px; color: #555; padding-left: 20px;">
+                 <li><strong>Payment Gateway: </strong> Paystack</li>
+                 <li><strong>Order Reference Number:</strong> ${reference}</li>
+                 <li><strong>Amount Paid:</strong> ₦${amount.toLocaleString()}</li>
+                 <li><strong>Transaction Status:</strong> pending</li>
+                </ul>
+                ${itemsHtml}
+                <p style="font-size: 16px; color: #555;">
+                    You can track your order with this reference number <strong> ${reference} </strong>
+                </p>
+                <p style="font-size: 16px; color: #555;">
+                    You can access your dashboard for more details or to track your order.
+                </p>
+            </div>
+   
+            <hr style="border-top: 1px solid #eeeeee; margin: 30px 0;" />
+   
+            <div style="text-align: center; font-size: 14px; color: #999;">
+                <p style="margin: 0 0 10px;">Thanks for choosing Mejarc!</p>
+                <p>&copy; ${new Date().getFullYear()} Mejarc. All rights reserved.</p>
+            </div>
+        </div>
+      `,
+        };
+        try {
+            await this.brevoClient.sendTransacEmail(mailOptions);
+        }
+        catch (err) {
+            console.error(`Failed to send order confirmation to ${email}`, err.message);
+        }
+    }
+    async VerifyOrder(email, firstName, lastName, amount, referencePay, trans_status, orderItems) {
+        let itemsHtml = '';
+        if (orderItems && orderItems.length > 0) {
+            itemsHtml =
+                `
+        <div style="margin-top: 15px; padding: 10px; background-color: #f1f1f1; border-radius: 8px;">
+          <h4 style="margin: 0 0 10px; color: #333;">Purchased Plan details:</h4>
+          <ul style="margin: 0; padding-left: 20px; font-size: 14px; color: #555;">
+      ` +
+                    orderItems
+                        .map((item) => {
+                        const title = item.product?.title || item.title || 'Building Plan';
+                        const prodId = item.product?.productId || (item.productId && !item.productId.includes('-') && item.productId.length < 12 ? item.productId : 'PRD001');
+                        return `<li style="margin-bottom: 6px;"><strong>${title}</strong> (Product ID: <span style="font-family: monospace; color: #0284c7; font-weight: bold;">${prodId}</span>) &bull; Qty: ${item.totalQuantity || 1}</li>`;
+                    })
+                        .join('') +
+                    `
+          </ul>
+        </div>
+      `;
+        }
+        const mailOptions = {
+            sender: { name: 'Mejarc', email: process.env.MAIL_FROM },
+            to: [{ email, name: firstName }],
+            subject: 'Payment Verified - Thank You for Your Payment!',
+            htmlContent: `
+        <div style="font-family: 'Arial', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);">
+            <div style="text-align: center; padding-bottom: 20px;">
+                <img src="https://res.cloudinary.com/dlrelihio/image/upload/v1770794866/mejarcnewlogo_rswhb7.webp" alt="Mejarc Logo" style="width: 150px; margin-bottom: 20px;" />
+                <h1 style="color: #333; font-size: 24px; margin-bottom: 5px;">Payment Verified!</h1>
+                <p style="font-size: 16px; color: #777;">Your transaction was successful.</p>
+            </div>
+  
+            <div style="padding: 20px; background-color: #f9f9f9; border-radius: 8px;">
+                <p style="font-size: 18px; color: #555;">Hello <strong>${firstName} ${lastName}</strong>,</p>
+                <p style="font-size: 16px; color: #555;">
+                    We’ve successfully received and verified your payment. Thank you for trusting Mejarc!
+                </p>
+                <ul style="font-size: 16px; color: #555; padding-left: 20px;">
+                 <li><strong>Payment Gateway: </strong> Paystack</li>
+                 <li><strong>Payment Reference:</strong> ${referencePay}</li>
+                 <li><strong>Amount Paid:</strong> ₦${amount.toLocaleString()}</li>
+                 <li><strong>Transaction Status:</strong> ${trans_status}</li>
+                </ul>
+                ${itemsHtml}
+            </div>
+  
+            <hr style="border-top: 1px solid #eeeeee; margin: 30px 0;" />
+  
+            <div style="text-align: center; font-size: 14px; color: #999;">
+                <p style="margin: 0 0 10px;">Thanks for being part of Mejarc!</p>
+                <p>&copy; ${new Date().getFullYear()} Mejarc. All rights reserved.</p>
+            </div>
+        </div>
+      `,
+        };
+        try {
+            await this.brevoClient.sendTransacEmail(mailOptions);
+            console.log(`✅ Email sent: Payment Verified to ${email}`);
+        }
+        catch (err) {
+            console.error(`Failed to send Payment Verified to ${email}:`, err.message);
+        }
+    }
+    async Invoice(email, firstName, lastName, amount, referencePay, trans_status, orderItems, pricingPlan, orderDate) {
+        const formattedDate = new Date(orderDate).toLocaleDateString();
+        let itemsHtml = '';
+        if (orderItems && orderItems.length > 0) {
+            itemsHtml += orderItems
+                .map((item) => {
+                const productName = item?.product?.title || 'N/A';
+                const prodId = item?.product?.productId || (item?.productId && !item?.productId.includes('-') && item?.productId.length < 12 ? item?.productId : 'PRD001');
+                const quantity = item?.totalQuantity || 0;
+                const price = item?.product?.price || 0;
+                const total = quantity * price;
+                return `<tr><td style="padding: 8px; border: 1px solid #ccc;">${productName} <br/><span style="font-size: 11px; font-family: monospace; color: #0284c7;">ID: ${prodId}</span></td><td style="padding: 8px; border: 1px solid #ccc;">${quantity}</td><td style="padding: 8px; border: 1px solid #ccc;">₦${total.toLocaleString()}</td></tr>`;
+            })
+                .join('');
+        }
+        let pricingPlanHtml = '';
+        if (pricingPlan) {
+            pricingPlanHtml = `<tr><td style="padding: 8px; border: 1px solid #ccc;">${pricingPlan.name || 'Pricing Plan'}</td><td style="padding: 8px; border: 1px solid #ccc;">1</td><td style="padding: 8px; border: 1px solid #ccc;">₦${pricingPlan.price?.toLocaleString() || '0'}</td></tr>`;
+        }
+        const tableRows = `${itemsHtml}${pricingPlanHtml}`;
+        const mailOptions = {
+            sender: { name: 'Mejarc', email: process.env.MAIL_FROM },
+            to: [{ email, name: firstName }],
+            subject: 'Invoice - Payment Verified',
+            htmlContent: `
+      <div style="font-family: 'Arial', sans-serif; max-width: 700px; margin: auto; padding: 20px; background-color: #fff;">
+        <div style="text-align: center; margin-bottom: 30px;">
+          <img src="https://res.cloudinary.com/dlrelihio/image/upload/v1770794866/mejarcnewlogo_rswhb7.webp" width="150" alt="Mejarc Logo" />
+          <h2 style="color: #333;">Payment Invoice</h2>
+          <p style="color: #777;">Transaction successful on ${formattedDate}</p>
+        </div>
+        <p>Hi <strong>${firstName} ${lastName}</strong>,</p>
+        <p>Thank you for your purchase! Here are your order details:</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+          <thead>
+            <tr>
+              <th style="padding: 10px; border: 1px solid #ccc;">Item</th>
+              <th style="padding: 10px; border: 1px solid #ccc;">Quantity</th>
+              <th style="padding: 10px; border: 1px solid #ccc;">Total</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+        <p><strong>Payment Reference:</strong> ${referencePay}</p>
+        <p><strong>Total Amount Paid:</strong> ₦${amount.toLocaleString()}</p>
+        <p><strong>Transaction Status:</strong> ${trans_status}</p>
+        <hr style="margin: 30px 0;" />
+        <div style="text-align: center; color: #aaa;">
+          <p>&copy; ${new Date().getFullYear()} Mejarc. All rights reserved.</p>
+        </div>
+      </div>
+    `,
+        };
+        try {
+            await this.brevoClient.sendTransacEmail(mailOptions);
+            console.log(`✅ Invoice sent to ${email}`);
+        }
+        catch (err) {
+            console.error(`Failed to send invoice to ${email}:`, err.message);
+        }
+    }
+    async notifyAdminOfInvoice(email, firstName, lastName, amount, referencePay, trans_status, orderItems, pricingPlan, orderDate) {
+        const formattedDate = new Date(orderDate).toLocaleDateString();
+        let itemsHtml = '';
+        if (orderItems && orderItems.length > 0) {
+            itemsHtml += orderItems
+                .map((item) => {
+                const productName = item?.product?.title || 'N/A';
+                const prodId = item?.product?.productId || (item?.productId && !item?.productId.includes('-') && item?.productId.length < 12 ? item?.productId : 'PRD001');
+                const quantity = item?.totalQuantity || 0;
+                const price = item?.product?.price || 0;
+                const total = quantity * price;
+                return `<tr><td style="padding: 8px; border: 1px solid #ccc;">${productName} <br/><span style="font-size: 11px; font-family: monospace; color: #0284c7;">ID: ${prodId}</span></td><td style="padding: 8px; border: 1px solid #ccc;">${quantity}</td><td style="padding: 8px; border: 1px solid #ccc;">₦${total.toLocaleString()}</td></tr>`;
+            })
+                .join('');
+        }
+        let pricingPlanHtml = '';
+        if (pricingPlan) {
+            pricingPlanHtml = `<tr><td style="padding: 8px; border: 1px solid #ccc;">${pricingPlan.name || 'Pricing Plan'}</td><td style="padding: 8px; border: 1px solid #ccc;">1</td><td style="padding: 8px; border: 1px solid #ccc;">₦${pricingPlan.price?.toLocaleString() || '0'}</td></tr>`;
+        }
+        const tableRows = `${itemsHtml}${pricingPlanHtml}`;
+        const adminMailOptions = {
+            sender: { name: 'Mejarc System', email: process.env.MAIL_FROM },
+            to: [{ email: 'nwaiwugetrude@gmail.com' }],
+            subject: `Payment Approved - ${firstName} ${lastName}`,
+            htmlContent: `
+      <div style="font-family: 'Arial', sans-serif; max-width: 700px; margin: auto; padding: 20px; background-color: #fff;">
+        <h3 style="color: #333;">New Payment Verified</h3>
+        <p><strong>User:</strong> ${firstName} ${lastName}</p>
+        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Amount Paid:</strong> ₦${amount.toLocaleString()}</p>
+        <p><strong>Payment Reference:</strong> ${referencePay}</p>
+        <p><strong>Transaction Status:</strong> ${trans_status}</p>
+        <p><strong>Date:</strong> ${formattedDate}</p>
+
+        <h4>Invoice Details:</h4>
+        <table style="width: 100%; border-collapse: collapse; margin-top: 15px;">
+          <thead>
+            <tr>
+              <th style="padding: 10px; border: 1px solid #ccc;">Item</th>
+              <th style="padding: 10px; border: 1px solid #ccc;">Quantity</th>
+              <th style="padding: 10px; border: 1px solid #ccc;">Total</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+        <hr style="margin: 30px 0;" />
+        <div style="text-align: center; color: #aaa;">
+          <p>&copy; ${new Date().getFullYear()} Mejarc</p>
+        </div>
+      </div>
+    `,
+        };
+        try {
+            await this.brevoClient.sendTransacEmail(adminMailOptions);
+            console.log('Admin email sent successfully');
+        }
+        catch (err) {
+            console.error('Error sending admin email:', err.message);
+        }
+    }
+    async sendAccountCreatedMail(email, plainPassword) {
+        const user = await this.userRepository.findOne({ where: { email } });
+        if (user) {
+            const expiryDate = new Date();
+            expiryDate.setHours(expiryDate.getHours() + 1);
+            const resetToken = (0, uuid_1.v4)();
+            user.resetToken = resetToken;
+            user.resetTokenExpires = expiryDate;
+            await this.userRepository.save(user);
+            const resetLink = `${process.env.Frontend_Domain_Url}/reset-password?token=${resetToken}`;
+            const mailOptions = {
+                sender: { name: 'Mejarc', email: process.env.MAIL_FROM },
+                to: [{ email, name: user.firstName }],
+                subject: 'Your Mejarc Account Has Been Created 🎉',
+                htmlContent: `
+      <div style="font-family: Arial, sans-serif; padding: 20px;">
+        <h2>Welcome to Mejarc!</h2>
+        <p>Hi ${user.firstName || ''} ${user.lastName || ''},</p>
+        <p>An account has been automatically created for you after your successful payment.</p>
+        <p><strong>Temporary Login Details:</strong></p>
+        <p>
+          <b>Email:</b> ${email}<br>
+          <b>Temporary Password:</b> ${plainPassword || 'Generated password unavailable'}
+        </p>
+        <p>You can log in with these credentials and then change your password in your account settings.</p>
+        <p>If you prefer, you can reset your password directly using the link below:</p>
+        <a href="${resetLink}" style="display:inline-block; background-color:#4CAF50; color:white; padding:10px 20px; border-radius:5px; text-decoration:none;">
+          Reset Your Password
+        </a>
+        <p>This link will expire in 1 hour.</p>
+        <p>We’re excited to have you onboard 🚀</p>
+        <hr>
+        <p style="color:#777;">If you didn’t make this payment, please ignore this email.</p>
+        <p>&copy; ${new Date().getFullYear()} Mejarc</p>
+      </div>
+    `,
+            };
+            try {
+                await this.brevoClient.sendTransacEmail(mailOptions);
+                console.log(`✅ Account creation email sent to ${email}`);
+            }
+            catch (err) {
+                console.error('Failed to send account creation email:', err.message);
+            }
+        }
+    }
+    async sendProductDeliveryMail(email, firstName, orderItems, order) {
+        let productsHtml = '';
+        if (orderItems && orderItems.length > 0) {
+            productsHtml += orderItems
+                .map((item) => {
+                const productName = item?.product?.title || 'Unknown Product';
+                const prodId = item?.product?.productId || (item?.productId && !item?.productId.includes('-') && item?.productId.length < 12 ? item?.productId : 'PRD001');
+                let filesHtml = '<ul style="padding-left: 20px;">';
+                const formatFiles = (planField, label) => {
+                    let html = '';
+                    let links = [];
+                    if (Array.isArray(planField)) {
+                        links = planField;
+                    }
+                    else if (typeof planField === 'string' &&
+                        planField.trim().length > 0) {
+                        links = planField.includes(',')
+                            ? planField.split(',').map((s) => s.trim())
+                            : [planField.trim()];
+                    }
+                    links.filter(Boolean).forEach((link, i) => {
+                        const rawFileName = decodeURIComponent(link.split('/').pop()?.split('?')[0] || `File-${i + 1}`);
+                        const ext = rawFileName.split('.').pop()?.toUpperCase() || '';
+                        const typeBadge = ext ? ` [${ext}]` : '';
+                        html += `<li style="margin-bottom: 10px; list-style: none;">
+                <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between;">
+                  <div>
+                    <span style="font-weight: bold; color: #1e293b; font-size: 13px;">${label} ${links.length > 1 ? `#${i + 1}` : ''}</span>
+                    <span style="display: inline-block; background-color: #e0f2fe; color: #0369a1; font-size: 10px; font-weight: 800; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">${typeBadge || 'FILE'}</span>
+                    <p style="margin: 3px 0 0; font-size: 11px; color: #64748b; word-break: break-all;">${rawFileName}</p>
+                  </div>
+                  <div>
+                    <a href="${link}" target="_blank" style="background-color: #3b82f6; color: #ffffff; text-decoration: none; font-weight: bold; font-size: 12px; padding: 6px 12px; border-radius: 6px; display: inline-block;">Download</a>
+                  </div>
+                </div>
+              </li>`;
+                    });
+                    return html;
+                };
+                filesHtml += formatFiles(item?.product?.architecturalPlan, 'Architectural Plan');
+                filesHtml += formatFiles(item?.product?.structuralPlan, 'Structural Plan');
+                filesHtml += formatFiles(item?.product?.electricalPlan, 'Electrical Plan');
+                filesHtml += formatFiles(item?.product?.mechanicalPlan, 'Mechanical Plan');
+                if (filesHtml === '<ul style="padding-left: 20px;">') {
+                    filesHtml +=
+                        '<li style="list-style: none; color: #888; font-size: 13px;">No files available for download yet. Please contact support.</li>';
+                }
+                filesHtml += '</ul>';
+                return `
+          <div style="border: 1px solid #eee; padding: 15px; margin-bottom: 15px; border-radius: 5px;">
+             <div style="display: flex; justify-content: space-between; align-items: baseline;">
+               <h4 style="margin-top: 0; color: #333;">${productName}</h4>
+               <span style="font-family: monospace; font-size: 12px; color: #0284c7; font-weight: bold; background: #e0f2fe; padding: 2px 8px; border-radius: 4px;">Product ID: ${prodId}</span>
+             </div>
+             <p style="font-size: 14px; color: #666; margin-top: 6px;">Here are your product files:</p>
+             ${filesHtml}
+          </div>
+        `;
+            })
+                .join('');
+        }
+        const mailOptions = {
+            sender: { name: 'Mejarc', email: process.env.MAIL_FROM },
+            to: [{ email, name: firstName }],
+            subject: 'Your Product Download Links 📦',
+            htmlContent: `
+        <div style="font-family: 'Arial', sans-serif; max-width: 700px; margin: auto; padding: 20px; background-color: #fff;">
+          <div style="text-align: center; margin-bottom: 30px;">
+            <img src="https://res.cloudinary.com/dlrelihio/image/upload/v1770794866/mejarcnewlogo_rswhb7.webp" width="150" alt="Mejarc Logo" />
+            <h2 style="color: #333;">Your Purchase is Ready!</h2>
+          </div>
+          <p>Hi <strong>${firstName}</strong>,</p>
+          <p>Thank you for your purchase! We successfully processed your payment and your product files are ready for download.</p>
+          ${order
+                ? `
+          <div style="background-color: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 25px; border-left: 4px solid #FFC700; font-size: 14px; color: #555;">
+            <p style="margin: 0 0 5px;"><strong>Order ID:</strong> ${order.orderNumber || (order.id ? 'ORD-' + String(order.id).replace(/[^a-zA-Z0-9]/g, '').slice(-8).toUpperCase() : 'ORD-COMPLETED')}</p>
+            <p style="margin: 0 0 5px;"><strong>Payment Reference:</strong> ${order.payStackPayment?.reference || 'N/A'}</p>
+            <p style="margin: 0 0 5px;"><strong>Amount Paid:</strong> ₦${parseFloat(order.grandTotal || '0').toLocaleString()}</p>
+            <p style="margin: 0 0 5px;"><strong>Date:</strong> ${new Date(order.createdAt).toLocaleDateString()}</p>
+          </div>
+          `
+                : ''}
+          <div style="margin: 30px 0;">
+             ${productsHtml}
+          </div>
+          <p>If you have any issues accessing these files, please reply to this email.</p>
+          <hr style="margin: 30px 0;" />
+          <div style="text-align: center; color: #aaa;">
+            <p>&copy; ${new Date().getFullYear()} Mejarc All rights reserved.</p>
+          </div>
+        </div>
+      `,
+        };
+        try {
+            await this.brevoClient.sendTransacEmail(mailOptions);
+            console.log(`✅ Product delivery email sent to ${email}`);
+        }
+        catch (err) {
+            console.error(`Failed to send delivery email to ${email}:`, err.message);
+        }
+    }
+    async notifyAgentOfProductSale(agentEmail, agentName, productTitle, amountEarned) {
+        const mailOptions = {
+            sender: { name: 'Mejarc', email: process.env.MAIL_FROM },
+            to: [{ email: agentEmail, name: agentName }],
+            subject: '🎉 You Made a Sale!',
+            htmlContent: `
+          <div style="font-family: 'Arial', sans-serif; max-width: 600px; margin: auto; padding: 20px; background-color: #fff; border: 1px solid #eaeaea; border-radius: 8px;">
+            <div style="text-align: center; padding-bottom: 20px;">
+                <img src="https://res.cloudinary.com/dlrelihio/image/upload/v1770794866/mejarcnewlogo_rswhb7.webp" alt="Mejarc Logo" style="width: 150px; margin-bottom: 20px;" />
+            </div>
+            <h2 style="color: #333; text-align: center;">Great news, ${agentName}!</h2>
+            <p style="font-size: 16px; color: #555;">One of your products was just purchased.</p>
+            
+            <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                <p><strong>Product Sold:</strong> ${productTitle}</p>
+                <p><strong>Amount Credited to Wallet:</strong> ₦${amountEarned.toLocaleString()}</p>
+            </div>
+            
+            <p style="font-size: 16px; color: #555;">Your wallet balance has been updated. You can check your earnings on your dashboard.</p>
+            
+            <div style="text-align: center; margin-top: 30px;">
+              <a href="https://mejarc.com/agent-dashboard" style="background: #4CAF50; color: white; padding: 12px 24px; border-radius: 5px; text-decoration: none; font-size: 16px;">View Dashboard</a>
+            </div>
+          </div>
+          `,
+        };
+        try {
+            await this.brevoClient.sendTransacEmail(mailOptions);
+        }
+        catch (err) {
+            console.error(`Failed to notify agent ${agentEmail} of sale:`, err.message);
+        }
+    }
+};
+exports.MailService = MailService;
+exports.MailService = MailService = __decorate([
+    (0, common_1.Injectable)(),
+    __param(0, (0, database_module_1.InjectRepository)(user_entity_1.User)),
+    __metadata("design:paramtypes", [Object])
+], MailService);
+//# sourceMappingURL=mail.service.js.map

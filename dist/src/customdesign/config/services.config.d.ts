@@ -1,0 +1,11 @@
+import { ServiceType, ServiceConfig } from '../customdesign.types';
+export declare const LANDSCAPE_DESIGN_CONFIG: ServiceConfig;
+export declare const PRODUCT_DESIGN_CONFIG: ServiceConfig;
+export declare const INTERIOR_DESIGN_CONFIG: ServiceConfig;
+export declare const RENDERING_3D_CONFIG: ServiceConfig;
+export declare const ARCHITECTURAL_2D_CONFIG: ServiceConfig;
+export declare const BIM_CONFIG: ServiceConfig;
+export declare const MEP_DRAWINGS_CONFIG: ServiceConfig;
+export declare const STRUCTURAL_ENGINEERING_CONFIG: ServiceConfig;
+export declare const SERVICE_CONFIGS: Record<ServiceType, ServiceConfig>;
+export declare const getServiceConfig: (serviceType: ServiceType) => ServiceConfig;

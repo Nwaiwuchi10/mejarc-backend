@@ -1,0 +1,34 @@
+import { User } from '../../user/entities/user.entity';
+import { Agent } from '../../agent/entities/agent.entity';
+import { CustomDesignPayment } from './custom-design-payment.entity';
+import { ServiceType, CustomDesignStatus, SelectionMethod } from '../customdesign.types';
+export declare class CustomDesign {
+    id: string;
+    userId: string;
+    user: User;
+    agentId?: string;
+    agent?: Agent;
+    serviceType: ServiceType;
+    serviceContext: string;
+    projectType?: string;
+    scopeDeliverables?: string[];
+    sizeComplexity?: string;
+    style?: string;
+    budget?: number;
+    timeline?: string;
+    additionalInformation?: string;
+    attachedFiles?: string[];
+    selectionMethod: SelectionMethod;
+    currentStep: number;
+    status: CustomDesignStatus;
+    estimateCost?: number;
+    estimateTimeline?: string;
+    estimateNotes?: string;
+    isSubmitted: boolean;
+    submittedAt?: Date;
+    reviewNotes?: string;
+    reviewedAt?: Date;
+    createdAt: Date;
+    updatedAt: Date;
+    payment: CustomDesignPayment;
+}
