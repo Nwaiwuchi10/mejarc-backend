@@ -51,10 +51,8 @@ exports.AppModule = AppModule = __decorate([
                 inject: [config_1.ConfigService],
                 useFactory: (configService) => {
                     const uri = configService.get('MONGO_URI') ||
-                        configService.get('MONGODB_URI') ||
                         process.env.MONGO_URI ||
-                        process.env.MONGODB_URI ||
-                        'mongodb://localhost:27017/mejarc';
+                        'mongodb+srv://admin:qeU63hsXQITTHfmQ@nchrys.gpcjv.mongodb.net/mejarc';
                     return {
                         uri,
                     };

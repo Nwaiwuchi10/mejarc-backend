@@ -293,7 +293,7 @@ export default async function handler(req: any, res: any) {
       error: err?.message || String(err),
       stack: err?.stack,
       envCheck: {
-        hasMongoUri: !!(process.env.MONGO_URI || process.env.MONGODB_URI),
+        hasMongoUri: !!process.env.MONGO_URI,
         hasJwtSecret: !!process.env.JWT_SECRET,
         nodeVersion: process.version,
       },
