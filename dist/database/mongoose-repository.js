@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MongooseRepository = exports.QueryBuilder = void 0;
-const uuid_1 = require("uuid");
+const crypto_1 = require("crypto");
 class QueryBuilder {
     constructor(model, alias) {
         this.model = model;
@@ -271,7 +271,7 @@ class MongooseRepository {
         }
         const payload = { ...dto };
         if (!payload.id) {
-            payload.id = (0, uuid_1.v4)();
+            payload.id = (0, crypto_1.randomUUID)();
         }
         let instance;
         if (typeof targetClass === 'function') {
@@ -313,7 +313,7 @@ class MongooseRepository {
             const saved = await item.save();
             return saved.toObject ? saved.toObject({ virtuals: true }) : saved;
         }
-        const id = item.id || (item._id ? item._id.toString() : (0, uuid_1.v4)());
+        const id = item.id || (item._id ? item._id.toString() : (0, crypto_1.randomUUID)());
         item.id = id;
         const upserted = await this.model.findOneAndUpdate({ id }, { $set: item }, { new: true, upsert: true, setDefaultsOnInsert: true }).exec();
         return upserted ? (upserted.toObject ? upserted.toObject({ virtuals: true }) : upserted) : item;

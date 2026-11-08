@@ -18,7 +18,7 @@ const dotenv = require("dotenv");
 const common_1 = require("@nestjs/common");
 const database_module_1 = require("../../database/database.module");
 const user_entity_1 = require("../../user/entities/user.entity");
-const uuid_1 = require("uuid");
+const crypto_1 = require("crypto");
 const SibApiV3Sdk = require("sib-api-v3-sdk");
 dotenv.config();
 let MailService = class MailService {
@@ -290,7 +290,7 @@ let MailService = class MailService {
         if (user) {
             const expiryDate = new Date();
             expiryDate.setHours(expiryDate.getHours() + 1);
-            const resetToken = (0, uuid_1.v4)();
+            const resetToken = (0, crypto_1.randomUUID)();
             user.resetToken = resetToken;
             user.resetTokenExpires = expiryDate;
             await this.userRepository.save(user);

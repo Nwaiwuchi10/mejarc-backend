@@ -25,7 +25,7 @@ const paystack_payment_dto_1 = require("./dto/paystack-payment.dto");
 const axios_1 = require("axios");
 const admin_entity_1 = require("../admin/entities/admin.entity");
 const mail_service_1 = require("./Services/mail.service");
-const uuid_1 = require("uuid");
+const crypto_1 = require("crypto");
 const client_s3_1 = require("@aws-sdk/client-s3");
 const aws_s3_config_1 = require("../utils/aws-s3.config");
 const wallet_entity_1 = require("../wallet/entities/wallet.entity");
@@ -175,7 +175,7 @@ let OrderService = class OrderService {
                 where: { email: customerEmail },
             });
             if (!user) {
-                const generatedPassword = (0, uuid_1.v4)().slice(0, 10);
+                const generatedPassword = (0, crypto_1.randomUUID)().slice(0, 10);
                 user = this.userRepository.create({
                     email: customerEmail,
                     password: generatedPassword,
