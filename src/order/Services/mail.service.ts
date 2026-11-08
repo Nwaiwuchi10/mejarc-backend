@@ -5,7 +5,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from 'src/database/database.module';
 import { User } from '../../user/entities/user.entity';
 import { Repository } from 'src/database/database.module';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import * as SibApiV3Sdk from 'sib-api-v3-sdk';
 
 dotenv.config();
@@ -341,7 +341,7 @@ export class MailService {
     if (user) {
       const expiryDate = new Date();
       expiryDate.setHours(expiryDate.getHours() + 1);
-      const resetToken = uuidv4();
+      const resetToken = randomUUID();
       user.resetToken = resetToken;
       user.resetTokenExpires = expiryDate;
       await this.userRepository.save(user);

@@ -1,5 +1,5 @@
 import { Model, Document } from 'mongoose';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 
 export type FindOptionsWhere<T> = {
   [P in keyof T]?: any;
@@ -308,7 +308,7 @@ export class MongooseRepository<T = any> {
     }
     const payload = { ...dto } as any;
     if (!payload.id) {
-      payload.id = uuidv4();
+      payload.id = randomUUID();
     }
 
     let instance: any;
@@ -357,7 +357,7 @@ export class MongooseRepository<T = any> {
       return saved.toObject ? saved.toObject({ virtuals: true }) : saved;
     }
 
-    const id = item.id || (item._id ? item._id.toString() : uuidv4());
+    const id = item.id || (item._id ? item._id.toString() : randomUUID());
     item.id = id;
     const upserted = await this.model.findOneAndUpdate(
       { id },

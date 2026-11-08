@@ -21,7 +21,7 @@ import { AddCommentDto } from './dto/AddOrderComment.dto';
 import { Admin } from '../admin/entities/admin.entity';
 import { MailService } from './Services/mail.service';
 import { AddProjectDescDto } from './dto/projectDescription.dto';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { s3Client, AWS_S3_BUCKET_NAME } from '../utils/aws-s3.config';
 import { Wallet } from '../wallet/entities/wallet.entity';
@@ -235,7 +235,7 @@ export class OrderService {
       });
 
       if (!user) {
-        const generatedPassword = uuidv4().slice(0, 10);
+        const generatedPassword = randomUUID().slice(0, 10);
         user = this.userRepository.create({
           email: customerEmail,
           password: generatedPassword,
