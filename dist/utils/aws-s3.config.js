@@ -24,7 +24,7 @@ exports.s3Client = hasS3Credentials
     })
     : null;
 exports.AWS_S3_BUCKET_NAME = process.env.AWS_S3_BUCKET_NAME || '';
-if (exports.s3Client && exports.AWS_S3_BUCKET_NAME) {
+if (!process.env.VERCEL && exports.s3Client && exports.AWS_S3_BUCKET_NAME) {
     exports.s3Client
         .send(new client_s3_1.HeadBucketCommand({ Bucket: exports.AWS_S3_BUCKET_NAME }))
         .catch((err) => {

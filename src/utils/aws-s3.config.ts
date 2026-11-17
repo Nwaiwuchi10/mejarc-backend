@@ -26,9 +26,8 @@ export const s3Client = hasS3Credentials
 
 export const AWS_S3_BUCKET_NAME = process.env.AWS_S3_BUCKET_NAME || '';
 
-// Force AWS SDK to sync its internal clock offset by making a quick, lightweight request.
-// Even if it fails (due to clock skew or auth), the SDK extracts the server time and adjusts.
-if (s3Client && AWS_S3_BUCKET_NAME) {
+// Only sync clock when not running in serverless / Vercel
+if (!process.env.VERCEL && s3Client && AWS_S3_BUCKET_NAME) {
   s3Client
     .send(new HeadBucketCommand({ Bucket: AWS_S3_BUCKET_NAME }))
     .catch((err) => {
